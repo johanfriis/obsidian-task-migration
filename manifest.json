@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-plugin-starter",
+  "name": "Obsidian Plugin Starter",
+  "minAppVersion": "1.0.0",
+  "description": "An easy way to get started with obsidian plugins",
+  "author": "Johan Friis",
+  "authorUrl": "https://github.com/johanfriis",
+  "isDesktopOnly": false,
+  "version": "0.0.0"
+}
