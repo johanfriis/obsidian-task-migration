@@ -29,7 +29,7 @@ export class ObsidianPluginStarterTab extends PluginSettingTab {
     });
   }
 
-  addSomeElement(): void {
+  addSomeField(): void {
     new Setting(this.containerEl)
       .setName("Some Field")
       .setDesc("A field that does something useful")
