@@ -2,7 +2,7 @@
   "name": "obsidian-plugin-starter",
   "version": "0.0.0",
   "description": "Obsidian Plugin Starter",
-  "main": "build/main.js",
+  "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
