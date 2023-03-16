@@ -1,4 +1,4 @@
-import { Plugin, TFile } from "obsidian";
+import { Plugin } from "obsidian";
 import {
   ObsidianPluginStarterTab,
   DEFAULT_SETTINGS,
@@ -7,12 +7,6 @@ import {
 
 export default class ObsidianPluginStarter extends Plugin {
   settings: Settings;
-
-  buffer: Map<string, Set<string>>;
-  fileQueue: Set<TFile>;
-  timeoutId: NodeJS.Timeout;
-  styleEl: HTMLStyleElement;
-  skipDebounce: boolean;
 
   async onload() {
     console.log("Loading Obsidian Plugin Starter ...");
@@ -31,7 +25,7 @@ export default class ObsidianPluginStarter extends Plugin {
     /**
      * Here we can actually start manipulating the view
      */
-    this.app.workspace.onLayoutReady(async () => { });
+    this.app.workspace.onLayoutReady(async () => {});
   }
 
   async loadSettings() {
