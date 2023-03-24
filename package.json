@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-plugin-starter",
+  "name": "obsidian-task-migration",
   "version": "0.0.0",
-  "description": "Obsidian Plugin Starter",
+  "description": "Migrate tasks from earlier daily notes",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -22,5 +22,7 @@
     "tslib": "2.4.0",
     "typescript": "4.7.4"
   },
-  "dependencies": {}
+  "dependencies": {
+    "obsidian-daily-notes-interface": "^0.9.4"
+  }
 }

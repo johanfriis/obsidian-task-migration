@@ -1,3 +1,4 @@
 export type Settings = {
-  someField: string;
+  taskHeadingLevel: string;
+  taskHeadingName: string;
 };

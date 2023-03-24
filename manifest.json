@@ -1,8 +1,8 @@
 {
-  "id": "obsidian-plugin-starter",
-  "name": "Obsidian Plugin Starter",
+  "id": "obsidian-task-migration",
+  "name": "Obsidian Task Migration",
   "minAppVersion": "1.0.0",
-  "description": "An easy way to get started with obsidian plugins",
+  "description": "Migrate tasks from earlier daily notes",
   "author": "Johan Friis",
   "authorUrl": "https://github.com/johanfriis",
   "isDesktopOnly": false,
