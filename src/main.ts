@@ -20,6 +20,7 @@ export default class TaskMigrationPlugin extends Plugin {
 
   taskRegex = /\s*- \[ \].*/;
   migratedTaskRegex = /\s*- \[\>\].*/;
+  anyTaskRegex = /\s*- \[.\].*/;
 
   async onload() {
     await this.loadSettings();
@@ -47,22 +48,21 @@ export default class TaskMigrationPlugin extends Plugin {
   }
 
   async migrateTasks(editor: Editor, file: TFile) {
-    // get a list of all daily notes
-    // find the current daily note in the list
-    // loop over all previous daily notes
-    // -> migrate tasks to the current note
-    // if a daily note contains only migrated tasks, break loop
-    //
-    // The idea is that if we reach a daily note where all tasks are
-    // already migrated, then there is no reason to continue looping
-    // backwards.
+    /**
+     * get a list of all daily notes
+     * find the current daily note in the list
+     * loop over all previous daily notes
+     *   -> migrate tasks to the current note
+     * if a daily note contains only migrated tasks, break loop
+     *
+     * The idea is that if we reach a daily note where all tasks are
+     * already migrated, then there is no reason to continue looping
+     * backwards.
+     */
 
-    // before we do anything, make sure we are nested below the right heading
-    // const headingLevel = Number(this.settings.taskHeadingLevel);
-    // const headingName = this.settings.taskHeadingName;
-    // const heading = `${"#".repeat(headingLevel)} ${headingName}`;
-    // const headingRegex = new RegExp(`^#{1,${headingLevel}}\\s`);
-
+    /**
+     * before we do anything, make sure we are nested below the right heading
+     */
     const content = await this.app.vault.read(file);
     const lines = content.split(/\r?\n|\r|\n/g);
     const currentLine = editor.getCursor().line;
@@ -108,9 +108,13 @@ export default class TaskMigrationPlugin extends Plugin {
     const currentNoteUID = getDateUID(currentNoteDate, "day");
     const currentNoteIndex = dailyNoteKeys.indexOf(currentNoteUID);
 
+    if (currentNoteIndex === 0) {
+      return;
+    }
+
     const todosToMigrate: string[] = [];
 
-    for (let i = currentNoteIndex; i >= 0; i--) {
+    for (let i = currentNoteIndex - 1; i >= 0; i--) {
       const fromNoteUID = dailyNoteKeys[i];
       const fromNote = allDailyNotes[fromNoteUID];
 
@@ -121,19 +125,38 @@ export default class TaskMigrationPlugin extends Plugin {
       todosToMigrate.push(...todos);
     }
 
-    // TODO: hmm, how would I figure out where to insert the tasks I need to
-    // come up with something that is more solid than this I want to know if
-    // there are other tasks, and then insert them at the end of the list. If
-    // there is a heading or content after the tasks header, I want to handle
-    // the whitespace towards that content better.
-    editor.replaceRange("\n\n", {
-      line: foundHeadingLine + 1,
-      ch: 0,
-    });
+    /**
+     * from foundHeadlingLine, move forward line by line and look for the closest
+     * place to insert the tasks:
+     * 1)  If the first content after the heading is a list of tasks (could just
+     *     be one task, but that is still a list), then insert the tasks
+     *     directly after the last task in that list.
+     * 2) If the first content after the heading is anything but a task, then insert
+     *    the tasks on the next line after foundHeadingLine.
+     */
+    let lineToInsertAt = foundHeadingLine + 1;
+    let foundTaskLine = false;
+    for (let i = lineToInsertAt; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (this.anyTaskRegex.test(line)) {
+        foundTaskLine = true;
+        break;
+      }
+      if (foundTaskLine && !this.anyTaskRegex.test(line)) {
+        lineToInsertAt = i;
+        break;
+      }
+
+      if (!this.anyTaskRegex.test(line)) {
+        break;
+      }
+    }
+
     for (let i = 0; i < todosToMigrate.length; i++) {
       let todo = todosToMigrate[i];
       editor.replaceRange(todo + "\n", {
-        line: foundHeadingLine + i + 2,
+        line: lineToInsertAt + i,
         ch: 0,
       });
     }
@@ -147,6 +170,12 @@ export default class TaskMigrationPlugin extends Plugin {
 
     let tasks: [number, string][] = [];
     let migratedTasks: [number, string][] = [];
+
+    /**
+     * TODO: I want to figure out how I can migrate tasks that are nested
+     * where a child is not completed. I would want the context of the child
+     * to be preserved and all the tasks that make up the tree to be migrated.
+     */
 
     let shouldCollect = false;
     for (const [index, line] of lines.entries()) {
@@ -180,8 +209,8 @@ export default class TaskMigrationPlugin extends Plugin {
       const migratedTask = task.replace("- [ ]", "- [>]");
       modifiedLines[index] = migratedTask;
     });
-    const modifiedContent = modifiedLines.join("\n");
-    this.app.vault.modify(file, modifiedContent);
+    // const modifiedContent = modifiedLines.join("\n");
+    // this.app.vault.modify(file, modifiedContent);
 
     return tasks.map(([_, todo]) => todo);
   }
