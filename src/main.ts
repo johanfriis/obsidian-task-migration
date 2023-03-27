@@ -72,13 +72,14 @@ export default class TaskMigrationPlugin extends Plugin {
     for (let i = currentLine - 1; i >= 0; i--) {
       const line = lines[i];
 
-      if (this.headingRegex.test(line) && line !== this.heading) {
-        insideWrongHeading = true;
+      if (line === this.heading) {
+        foundHeadingLine = i;
         break;
       }
 
-      if (line === this.heading) {
-        foundHeadingLine = i;
+      if (this.headingRegex.test(line) && line !== this.heading) {
+        insideWrongHeading = true;
+        break;
       }
     }
 
