@@ -209,8 +209,8 @@ export default class TaskMigrationPlugin extends Plugin {
       const migratedTask = task.replace("- [ ]", "- [>]");
       modifiedLines[index] = migratedTask;
     });
-    // const modifiedContent = modifiedLines.join("\n");
-    // this.app.vault.modify(file, modifiedContent);
+    const modifiedContent = modifiedLines.join("\n");
+    this.app.vault.modify(file, modifiedContent);
 
     return tasks.map(([_, todo]) => todo);
   }
