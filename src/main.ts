@@ -26,11 +26,7 @@ export default class TaskMigrationPlugin extends Plugin {
     await this.loadSettings();
 
     this.addSettingTab(new TaskMigrationSettings(this.app, this));
-
-    this.headingLevel = Number(this.settings.taskHeadingLevel);
-    this.headingName = this.settings.taskHeadingName;
-    this.heading = `${"#".repeat(this.headingLevel)} ${this.headingName}`;
-    this.headingRegex = new RegExp(`^#{1,${this.headingLevel}}\\s`);
+    this.refreshSettings();
 
     this.addCommand({
       id: "obsidian-task-migration-migrate",
@@ -45,6 +41,13 @@ export default class TaskMigrationPlugin extends Plugin {
     });
 
     console.log("Obsidian Task Migration running ...");
+  }
+
+  refreshSettings() {
+    this.headingLevel = Number(this.settings.taskHeadingLevel);
+    this.headingName = this.settings.taskHeadingName;
+    this.heading = `${"#".repeat(this.headingLevel)} ${this.headingName}`;
+    this.headingRegex = new RegExp(`^#{1,${this.headingLevel}}\\s`);
   }
 
   async migrateTasks(editor: Editor, file: TFile) {
@@ -233,5 +236,6 @@ export default class TaskMigrationPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    this.refreshSettings();
   }
 }
