@@ -1,4 +1,12 @@
-import { Plugin, moment, TFile, Editor, Notice } from "obsidian";
+import {
+  Plugin,
+  moment,
+  TFile,
+  Editor,
+  Notice,
+  CachedMetadata,
+  HeadingCache,
+} from "obsidian";
 import { TaskMigrationSettings, DEFAULT_SETTINGS, Settings } from "./settings";
 import {
   getAllDailyNotes,
@@ -6,8 +14,8 @@ import {
   getDateUID,
   getDailyNoteSettings,
 } from "obsidian-daily-notes-interface";
-
-const FileAlreadyMigrated = Symbol();
+import { FileAlreadyMigrated, FileHasNoTasksHeading } from "./consts";
+import { getDailyNotes, getTaskSection } from "./helpers";
 
 export default class TaskMigrationPlugin extends Plugin {
   settings: Settings;
@@ -15,12 +23,8 @@ export default class TaskMigrationPlugin extends Plugin {
 
   headingLevel: number;
   headingName: string;
-  heading: string;
-  headingRegex: RegExp;
 
-  taskRegex = /\s*- \[ \].*/;
-  migratedTaskRegex = /\s*- \[\>\].*/;
-  anyTaskRegex = /\s*- \[.\].*/;
+  taskRegex = /^(?<whitespace>\s*)- \[(?<char>.)\]\s.*$/;
 
   async onload() {
     await this.loadSettings();
@@ -46,176 +50,170 @@ export default class TaskMigrationPlugin extends Plugin {
   refreshSettings() {
     this.headingLevel = Number(this.settings.taskHeadingLevel);
     this.headingName = this.settings.taskHeadingName;
-    this.heading = `${"#".repeat(this.headingLevel)} ${this.headingName}`;
-    this.headingRegex = new RegExp(`^#{1,${this.headingLevel}}\\s`);
   }
 
   async migrateTasks(editor: Editor, file: TFile) {
     /**
-     * get a list of all daily notes
-     * find the current daily note in the list
-     * loop over all previous daily notes
-     *   -> migrate tasks to the current note
-     * if a daily note contains only migrated tasks, break loop
-     *
-     * The idea is that if we reach a daily note where all tasks are
-     * already migrated, then there is no reason to continue looping
-     * backwards.
+     * make sure we have a tasks section
      */
+    const metadata = this.app.metadataCache.getFileCache(file);
+    const section = getTaskSection(
+      metadata,
+      this.headingName,
+      this.headingLevel
+    );
+
+    if (section === FileHasNoTasksHeading) {
+      new Notice(
+        `${this.pluginName}: Could not find ${this.headingName} heading`
+      );
+      return;
+    }
 
     /**
-     * before we do anything, make sure we are nested below the right heading
+     * get all daily notes and current daily note
      */
-    const content = await this.app.vault.read(file);
-    const lines = content.split(/\r?\n|\r|\n/g);
-    const currentLine = editor.getCursor().line;
-
-    let insideWrongHeading = false;
-    let foundHeadingLine = -1;
-    for (let i = currentLine - 1; i >= 0; i--) {
-      const line = lines[i];
-
-      if (line === this.heading) {
-        foundHeadingLine = i;
-        break;
-      }
-
-      if (this.headingRegex.test(line) && line !== this.heading) {
-        insideWrongHeading = true;
-        break;
-      }
-    }
-
-    if (insideWrongHeading) {
-      new Notice(
-        `${this.pluginName}: Not currently inside a ${this.headingName} heading`
-      );
-      return;
-    }
-
-    if (foundHeadingLine === -1) {
-      new Notice(
-        `${this.pluginName}: Could not find parent ${this.headingName} heading`
-      );
-      return;
-    }
-
-    const { format } = getDailyNoteSettings();
-
-    // we have to override the return type as the types used by
-    // obsidian-daily-notes-interface are outdated.
-    const allDailyNotes = getAllDailyNotes() as Record<string, TFile>;
-    const dailyNoteKeys = Object.keys(allDailyNotes).sort();
-
-    const currentNoteDate = moment(file.name, format);
-    const currentNoteUID = getDateUID(currentNoteDate, "day");
-    const currentNoteIndex = dailyNoteKeys.indexOf(currentNoteUID);
+    const { currentNoteIndex, allDailyNotes, dailyNoteKeys } = getDailyNotes(
+      file.name
+    );
 
     if (currentNoteIndex === 0) {
+      new Notice(`${this.pluginName}: Could not find current daily note`);
       return;
     }
 
-    const todosToMigrate: string[] = [];
-
+    /**
+     * For all daily notes before the current one, get the lines to migrate
+     */
+    const linesToMigrate: string[] = [];
     for (let i = currentNoteIndex - 1; i >= 0; i--) {
       const fromNoteUID = dailyNoteKeys[i];
       const fromNote = allDailyNotes[fromNoteUID];
 
-      const todos = await this.migrateFromNote(fromNote);
-      if (todos === FileAlreadyMigrated) {
+      const noteLines = await this.migrateFromNote(fromNote);
+      if (noteLines === FileHasNoTasksHeading) {
+        // if the not has no task headings, skip it
+        continue;
+      }
+      if (noteLines === FileAlreadyMigrated) {
+        // if the note has already been migrated, stop looking further back
         break;
       }
-      todosToMigrate.push(...todos);
+      linesToMigrate.push(...noteLines);
     }
 
-    /**
-     * from foundHeadlingLine, move forward line by line and look for the closest
-     * place to insert the tasks:
-     * 1)  If the first content after the heading is a list of tasks (could just
-     *     be one task, but that is still a list), then insert the tasks
-     *     directly after the last task in that list.
-     * 2) If the first content after the heading is anything but a task, then insert
-     *    the tasks on the next line after foundHeadingLine.
-     */
-    let lineToInsertAt = foundHeadingLine + 1;
-    let foundTaskLine = false;
-    for (let i = lineToInsertAt; i < lines.length; i++) {
+    // from the endLine, move backwards until we reach the first non empty line,
+    // them insert the linesToMigrate there
+    const content = await this.app.vault.read(file);
+    const lines = content.split(/\r?\n|\r|\n/g);
+    const endLine = section.endLine ?? editor.lastLine();
+    for (let i = endLine; i >= 0; i--) {
       const line = lines[i];
-
-      if (this.anyTaskRegex.test(line)) {
-        foundTaskLine = true;
+      if (line !== "") {
+        editor.replaceRange(`\n${linesToMigrate.join("\n")}`, {
+          line: i + 1,
+          ch: 0,
+        });
         break;
       }
-      if (foundTaskLine && !this.anyTaskRegex.test(line)) {
-        lineToInsertAt = i;
-        break;
-      }
-
-      if (!this.anyTaskRegex.test(line)) {
-        break;
-      }
-    }
-
-    for (let i = 0; i < todosToMigrate.length; i++) {
-      let todo = todosToMigrate[i];
-      editor.replaceRange(todo + "\n", {
-        line: lineToInsertAt + i,
-        ch: 0,
-      });
     }
   }
 
   async migrateFromNote(
     file: TFile
-  ): Promise<string[] | typeof FileAlreadyMigrated> {
+  ): Promise<
+    string[] | typeof FileAlreadyMigrated | typeof FileHasNoTasksHeading
+  > {
+    const metadata = this.app.metadataCache.getFileCache(file);
+    const section = getTaskSection(
+      metadata,
+      this.headingName,
+      this.headingLevel
+    );
+
+    if (section === FileHasNoTasksHeading) {
+      return FileHasNoTasksHeading;
+    }
+
     const content = await this.app.vault.read(file);
     const lines = content.split(/\r?\n|\r|\n/g);
+    const endLine = section.endLine ?? lines.length;
 
-    let tasks: [number, string][] = [];
-    let migratedTasks: [number, string][] = [];
+    // take all the lines between the start and end line
+    const potentialTaskLines = lines.slice(section.startLine, endLine);
+    const lineNumbers = Array.from(
+      { length: endLine - section.startLine + 1 },
+      (_, i) => i + section.startLine
+    );
+    const potentialTasks = potentialTaskLines.map((line, i) => [
+      lineNumbers[i],
+      line,
+    ]) as [number, string][];
 
-    /**
-     * TODO: I want to figure out how I can migrate tasks that are nested
-     * where a child is not completed. I would want the context of the child
-     * to be preserved and all the tasks that make up the tree to be migrated.
-     */
+    // - loop over the lines in reverse
+    // - if we find a line that is a completed task (anything but `- [ ]`),
+    // - delete it from the array unless it has an open nested task
+    let hasNestedOpenTask = false;
+    let previousIndent = 0;
+    let lastSeenOpenTask = -1;
+    let previouslyMigratedLines = 0;
+    for (let i = potentialTasks.length - 1; i >= 0; i--) {
+      const [_, line] = potentialTasks[i];
 
-    let shouldCollect = false;
-    for (const [index, line] of lines.entries()) {
-      if (!shouldCollect && line === this.heading) {
-        shouldCollect = true;
-        continue;
-      }
+      const match = line.match(this.taskRegex);
+      if (match) {
+        const char = match.groups?.char;
+        const currentIndent = match.groups?.whitespace?.length || 0;
 
-      if (shouldCollect && this.headingRegex.test(line)) {
-        // we have reached the end of our tasks to collect
-        shouldCollect = false;
-        break;
-      }
+        if (char !== " ") {
+          if (char === ">") {
+            previouslyMigratedLines++;
+          }
 
-      if (shouldCollect && this.taskRegex.test(line)) {
-        tasks.push([index, line]);
-      }
+          if (hasNestedOpenTask) {
+            if (currentIndent === 0) {
+              hasNestedOpenTask = false;
+              continue;
+            }
 
-      if (shouldCollect && this.migratedTaskRegex.test(line)) {
-        migratedTasks.push([index, line]);
+            if (currentIndent < previousIndent) {
+              previousIndent = currentIndent;
+              continue;
+            }
+          }
+
+          delete potentialTasks[i];
+          continue;
+        }
+
+        lastSeenOpenTask = i;
+
+        if (currentIndent && currentIndent > 0) {
+          hasNestedOpenTask = true;
+          previousIndent = currentIndent;
+        }
+      } else {
+        if (i > lastSeenOpenTask) {
+          delete potentialTasks[i];
+        }
       }
     }
 
-    if (migratedTasks.length > 0 && tasks.length === 0) {
+    const tasks = potentialTasks.filter((task) => task !== null);
+
+    if (tasks.length === 0 && previouslyMigratedLines > 0) {
       return FileAlreadyMigrated;
     }
 
     // Actually migrate the tasks in the file
-    const modifiedLines = lines;
     tasks.forEach(([index, task]) => {
       const migratedTask = task.replace("- [ ]", "- [>]");
-      modifiedLines[index] = migratedTask;
+      lines[index] = migratedTask;
     });
-    const modifiedContent = modifiedLines.join("\n");
+    const modifiedContent = lines.join("\n");
     this.app.vault.modify(file, modifiedContent);
 
-    return tasks.map(([_, todo]) => todo);
+    return tasks.map(([_, task]) => task);
   }
 
   canMigrateToFile(file: TFile | null): boolean {
