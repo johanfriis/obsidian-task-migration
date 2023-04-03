@@ -1,6 +1,6 @@
 {
   "name": "obsidian-task-migration",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Migrate tasks from earlier daily notes",
   "main": "main.js",
   "scripts": {
