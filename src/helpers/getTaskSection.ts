@@ -30,7 +30,7 @@ export function getTaskSection(
   );
 
   const startLine = targetHeader.position.start.line + 1;
-  const endLine = nextHeader?.position.start.line ?? null;
+  const endLine = (nextHeader?.position.start.line ?? Infinity) - 1;
 
   return {
     startLine,

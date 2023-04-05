@@ -4,7 +4,7 @@ import { FileHasNoTasksHeading } from "./consts";
 export type TaskSection =
   | {
       startLine: number;
-      endLine: number | null;
+      endLine: number;
     }
   | typeof FileHasNoTasksHeading;
 

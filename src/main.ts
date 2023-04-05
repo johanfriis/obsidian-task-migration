@@ -14,17 +14,24 @@ import {
   getDateUID,
   getDailyNoteSettings,
 } from "obsidian-daily-notes-interface";
-import { FileAlreadyMigrated, FileHasNoTasksHeading } from "./consts";
+import {
+  FileAlreadyMigrated,
+  FileHasNoTasksHeading,
+  TASKS_TO_MIGRATE,
+} from "./consts";
 import { getDailyNotes, getTaskSection } from "./helpers";
 
+class TaskMigrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TaskMigrationError";
+  }
+}
 export default class TaskMigrationPlugin extends Plugin {
   settings: Settings;
-  pluginName = "Task Migration";
 
   headingLevel: number;
   headingName: string;
-
-  taskRegex = /^(?<whitespace>\s*)- \[(?<char>.)\]\s.*$/;
 
   async onload() {
     await this.loadSettings();
@@ -40,7 +47,13 @@ export default class TaskMigrationPlugin extends Plugin {
         if (checking) {
           return this.canMigrateToFile(ctx.file);
         }
-        this.migrateTasks(editor, ctx.file as TFile);
+        try {
+          this.migrateTasks(editor, ctx.file as TFile);
+        } catch (error) {
+          if (error instanceof TaskMigrationError) {
+            new Notice(`${this.manifest.name}: ${error.message}`);
+          }
+        }
       },
     });
 
@@ -64,10 +77,9 @@ export default class TaskMigrationPlugin extends Plugin {
     );
 
     if (section === FileHasNoTasksHeading) {
-      new Notice(
-        `${this.pluginName}: Could not find ${this.headingName} heading`
+      throw new TaskMigrationError(
+        `Could not find ${this.headingName} heading`
       );
-      return;
     }
 
     /**
@@ -78,8 +90,7 @@ export default class TaskMigrationPlugin extends Plugin {
     );
 
     if (currentNoteIndex === 0) {
-      new Notice(`${this.pluginName}: Could not find current daily note`);
-      return;
+      throw new TaskMigrationError(`Could not find current daily note`);
     }
 
     /**
@@ -135,49 +146,50 @@ export default class TaskMigrationPlugin extends Plugin {
       return FileHasNoTasksHeading;
     }
 
-    const content = await this.app.vault.read(file);
-    const lines = content.split(/\r?\n|\r|\n/g);
-    const endLine = section.endLine ?? lines.length;
+    if (metadata?.listItems === undefined || metadata.listItems.length === 0) {
+      return [];
+    }
 
-    // take all the lines between the start and end line
-    const potentialTaskLines = lines.slice(section.startLine, endLine);
-    const lineNumbers = Array.from(
-      { length: endLine - section.startLine + 1 },
-      (_, i) => i + section.startLine
+    // select the tasks that are metween the start and end lines
+    const potentialTasks = metadata.listItems.filter((listItem) => {
+      return (
+        listItem.position.start.line >= section.startLine &&
+        listItem.position.start.line <= section.endLine
+      );
+    });
+
+    const taskTokens = potentialTasks.flatMap((listItem) =>
+      listItem.task ? [listItem.task] : []
     );
-    const potentialTasks = potentialTaskLines.map((line, i) => [
-      lineNumbers[i],
-      line,
-    ]) as [number, string][];
+    const hasTasksToMigrate = taskTokens.some((token) => {
+      return TASKS_TO_MIGRATE.includes(token);
+    });
+    const hasTasksAlreadyMigrated = taskTokens.includes(">");
 
-    // - loop over the lines in reverse
-    // - if we find a line that is a completed task (anything but `- [ ]`),
-    // - delete it from the array unless it has an open nested task
-    let hasNestedOpenTask = false;
-    let previousIndent = 0;
-    let lastSeenOpenTask = -1;
-    let previouslyMigratedLines = 0;
+    // if all tasks have already been migrated, consider this the furthest back we need to go
+    if (hasTasksAlreadyMigrated && !hasTasksToMigrate) {
+      return FileAlreadyMigrated;
+    }
+
+    let lastSeenMigratableTask = -1;
+    let previousTaskParent = -1;
+    let hasNestedMigratableTask = false;
+
     for (let i = potentialTasks.length - 1; i >= 0; i--) {
-      const [_, line] = potentialTasks[i];
+      const listItem = potentialTasks[i];
+      if (listItem.task) {
+        const taskParent = listItem.parent;
+        const taskMarker = listItem.task;
 
-      const match = line.match(this.taskRegex);
-      if (match) {
-        const char = match.groups?.char;
-        const currentIndent = match.groups?.whitespace?.length || 0;
-
-        if (char !== " ") {
-          if (char === ">") {
-            previouslyMigratedLines++;
-          }
-
-          if (hasNestedOpenTask) {
-            if (currentIndent === 0) {
-              hasNestedOpenTask = false;
+        if (!TASKS_TO_MIGRATE.includes(taskMarker)) {
+          if (hasNestedMigratableTask) {
+            if (taskParent < 0) {
+              hasNestedMigratableTask = false;
               continue;
             }
 
-            if (currentIndent < previousIndent) {
-              previousIndent = currentIndent;
+            if (taskParent < previousTaskParent) {
+              previousTaskParent = taskParent;
               continue;
             }
           }
@@ -186,34 +198,34 @@ export default class TaskMigrationPlugin extends Plugin {
           continue;
         }
 
-        lastSeenOpenTask = i;
+        lastSeenMigratableTask = i;
 
-        if (currentIndent && currentIndent > 0) {
-          hasNestedOpenTask = true;
-          previousIndent = currentIndent;
+        if (taskParent && taskParent > 0) {
+          hasNestedMigratableTask = true;
+          previousTaskParent = taskParent;
         }
       } else {
-        if (i > lastSeenOpenTask) {
+        if (i > lastSeenMigratableTask) {
           delete potentialTasks[i];
         }
       }
     }
-
     const tasks = potentialTasks.filter((task) => task !== null);
 
-    if (tasks.length === 0 && previouslyMigratedLines > 0) {
-      return FileAlreadyMigrated;
-    }
-
     // Actually migrate the tasks in the file
-    tasks.forEach(([index, task]) => {
-      const migratedTask = task.replace("- [ ]", "- [>]");
-      lines[index] = migratedTask;
+    const content = await this.app.vault.read(file);
+    const lines = content.split(/\r?\n|\r|\n/g);
+
+    let linesToMigrate: string[] = [];
+    tasks.forEach((task) => {
+      const line = lines[task.position.start.line];
+      linesToMigrate.push(line);
+      lines[task.position.start.line] = line.replace("- [ ]", "- [>]");
     });
     const modifiedContent = lines.join("\n");
     this.app.vault.modify(file, modifiedContent);
 
-    return tasks.map(([_, task]) => task);
+    return linesToMigrate;
   }
 
   canMigrateToFile(file: TFile | null): boolean {
