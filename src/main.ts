@@ -1,17 +1,7 @@
-import {
-  Plugin,
-  moment,
-  TFile,
-  Editor,
-  Notice,
-  CachedMetadata,
-  HeadingCache,
-} from "obsidian";
+import { Plugin, TFile, Editor, Notice } from "obsidian";
 import { TaskMigrationSettings, DEFAULT_SETTINGS, Settings } from "./settings";
 import {
-  getAllDailyNotes,
   appHasDailyNotesPluginLoaded,
-  getDateUID,
   getDailyNoteSettings,
 } from "obsidian-daily-notes-interface";
 import {
@@ -19,7 +9,13 @@ import {
   FileHasNoTasksHeading,
   TASKS_TO_MIGRATE,
 } from "./consts";
-import { getDailyNotes, getTaskSection } from "./helpers";
+import {
+  createBlockRef,
+  getAllFilePaths,
+  getDailyNotes,
+  getTaskSection,
+} from "./helpers";
+import { ChooserModal } from "./modules";
 
 class TaskMigrationError extends Error {
   constructor(message: string) {
@@ -40,23 +36,39 @@ export default class TaskMigrationPlugin extends Plugin {
     this.refreshSettings();
 
     this.addCommand({
-      id: "obsidian-task-migration-migrate",
-      name: `Migrate Tasks`,
+      id: "obsidian-task-migration-migrate-forward",
+      name: `Migrate Tasks Forward`,
       icon: "plus-circle",
       editorCheckCallback: (checking, editor, ctx) => {
         if (checking) {
           return this.canMigrateToFile(ctx.file);
         }
-        try {
-          this.migrateTasks(editor, ctx.file as TFile);
-        } catch (error) {
+
+        this.migrateForward(editor, ctx.file as TFile).catch((error) => {
           if (error instanceof TaskMigrationError) {
             new Notice(`${this.manifest.name}: ${error.message}`);
           }
-        }
+        });
       },
     });
 
+    this.addCommand({
+      id: "obsidian-task-migration-migrate-sideways",
+      name: `Migrate Tasks Sideways`,
+      icon: "arrow-right-circle",
+      editorCheckCallback: (checking, editor, ctx) => {
+        if (checking) {
+          return true;
+          return this.canMigrateToFile(ctx.file);
+        }
+
+        this.migrateSideways(ctx.file as TFile).catch((error) => {
+          if (error instanceof TaskMigrationError) {
+            new Notice(`${this.manifest.name}: ${error.message}`);
+          }
+        });
+      },
+    });
     console.log("Obsidian Task Migration running ...");
   }
 
@@ -65,23 +77,7 @@ export default class TaskMigrationPlugin extends Plugin {
     this.headingName = this.settings.taskHeadingName;
   }
 
-  async migrateTasks(editor: Editor, file: TFile) {
-    /**
-     * make sure we have a tasks section
-     */
-    const metadata = this.app.metadataCache.getFileCache(file);
-    const section = getTaskSection(
-      metadata,
-      this.headingName,
-      this.headingLevel
-    );
-
-    if (section === FileHasNoTasksHeading) {
-      throw new TaskMigrationError(
-        `Could not find ${this.headingName} heading`
-      );
-    }
-
+  async migrateForward(editor: Editor, file: TFile) {
     /**
      * get all daily notes and current daily note
      */
@@ -101,16 +97,126 @@ export default class TaskMigrationPlugin extends Plugin {
       const fromNoteUID = dailyNoteKeys[i];
       const fromNote = allDailyNotes[fromNoteUID];
 
-      const noteLines = await this.migrateFromNote(fromNote);
+      const noteLines = await this.migrateFromFile(fromNote);
       if (noteLines === FileHasNoTasksHeading) {
-        // if the not has no task headings, skip it
+        // if the file has no task headings, skip it
         continue;
       }
       if (noteLines === FileAlreadyMigrated) {
-        // if the note has already been migrated, stop looking further back
+        // if the file has already been migrated, stop looking further back
         break;
       }
       linesToMigrate.push(...noteLines);
+    }
+
+    await this.migrateToFile(editor, file, linesToMigrate);
+  }
+
+  async migrateSideways(file: TFile) {
+    /**
+     * Check that we have lines of tasks to migrate from this file
+     */
+    const metadata = this.app.metadataCache.getFileCache(file);
+    const section = getTaskSection(
+      metadata,
+      this.headingName,
+      this.headingLevel
+    );
+
+    if (section === FileHasNoTasksHeading) {
+      throw new TaskMigrationError(
+        `Could not find ${this.headingName} heading`
+      );
+    }
+
+    /**
+     * Get the sideways file or pop up a modal to ask for one.
+     */
+    let sidewaysFilePath = this.settings.sidewaysFile;
+    if (sidewaysFilePath) {
+      this.migrateToFileRaw(file, sidewaysFilePath);
+    } else {
+      const allFiles = getAllFilePaths(this.app);
+      new ChooserModal(this.app, allFiles).start((targetFilePath) => {
+        this.migrateToFileRaw(file, targetFilePath);
+      });
+    }
+  }
+
+  /**
+   * Migrate lines to a file that is currently not loaded
+   */
+  async migrateToFileRaw(sourceFile: TFile, sidewaysFilePath: string) {
+    // const linesToMigrate: string[] = ["- [ ] Task 1", "- [ ] Task 2"];
+    const linesToMigrate = await this.migrateFromFile(sourceFile);
+
+    if (linesToMigrate === FileHasNoTasksHeading) {
+      // will never happen
+      return;
+    }
+
+    if (linesToMigrate === FileAlreadyMigrated) {
+      throw new TaskMigrationError(`No tasks to migrate`);
+    }
+
+    let sidewaysFile = this.app.vault.getAbstractFileByPath(
+      sidewaysFilePath
+    ) as TFile;
+
+    /**
+     * make sure we have a tasks section
+     */
+    const metadata = this.app.metadataCache.getFileCache(sidewaysFile);
+    const section = getTaskSection(
+      metadata,
+      this.headingName,
+      this.headingLevel
+    );
+
+    if (section === FileHasNoTasksHeading) {
+      throw new TaskMigrationError(
+        `Could not find ${this.headingName} heading`
+      );
+    }
+
+    /**
+     * Insert the new lines after the last task in the tasks section
+     * or at the start of the tasks section if there are no tasks
+     */
+    const priorTasks = metadata?.listItems?.filter(
+      (item) =>
+        item.position.start.line > section.startLine &&
+        item.position.start.line < section.endLine
+    );
+
+    // pick the highest line number
+    const lastPriorTaskLine = priorTasks
+      ?.map((item) => item.position.start.line)
+      .sort((a, b) => b - a)[0];
+
+    const insertLine = (lastPriorTaskLine ?? section.startLine) + 1;
+
+    const content = await this.app.vault.read(sidewaysFile);
+    const lines = content.split(/\r?\n|\r|\n/g);
+    lines.splice(insertLine, 0, ...linesToMigrate);
+    await this.app.vault.modify(sidewaysFile, lines.join("\n"));
+  }
+
+  async migrateToFile(editor: Editor, file: TFile, linesToMigrate: string[]) {
+    /**
+     * make sure we have a tasks section
+     */
+    const metadata = this.app.metadataCache.getFileCache(file);
+    const section = getTaskSection(
+      metadata,
+      this.headingName,
+      this.headingLevel
+    );
+
+    if (section === FileHasNoTasksHeading) {
+      throw new TaskMigrationError(
+        `Could not find ${this.headingName} heading`
+      );
     }
 
     // from the endLine, move backwards until we reach the first non empty line,
@@ -130,7 +236,7 @@ export default class TaskMigrationPlugin extends Plugin {
     }
   }
 
-  async migrateFromNote(
+  async migrateFromFile(
     file: TFile
   ): Promise<
     string[] | typeof FileAlreadyMigrated | typeof FileHasNoTasksHeading
@@ -150,7 +256,7 @@ export default class TaskMigrationPlugin extends Plugin {
       return [];
     }
 
-    // select the tasks that are metween the start and end lines
+    // select the tasks that are between the start and end lines
     const potentialTasks = metadata.listItems.filter((listItem) => {
       return (
         listItem.position.start.line >= section.startLine &&
@@ -218,8 +324,35 @@ export default class TaskMigrationPlugin extends Plugin {
 
     let linesToMigrate: string[] = [];
     tasks.forEach((task) => {
-      const line = lines[task.position.start.line];
-      linesToMigrate.push(line);
+      let line = lines[task.position.start.line];
+      let lineToMigrate = line;
+
+      if (this.settings.migrationTag) {
+        line = `${lineToMigrate} #${this.settings.migrationTag}`;
+      }
+
+      // check is line ends with a block reference (a caret followed by a 6 character hex string)
+      const matchBlockRef = line.match(/(?<=\^)[0-9a-f]{6}$/);
+      let blockRef;
+      if (!matchBlockRef) {
+        blockRef = createBlockRef();
+        line = `${line} ^${blockRef}`;
+      } else {
+        blockRef = matchBlockRef[0];
+      }
+
+      // TODO: figure out how to add tags to tasks that already have a blockref (it needs to be before the blockref)
+
+      // add a link to the blockref to the line
+      const fileLink = this.app.fileManager.generateMarkdownLink(
+        file,
+        file.name,
+        `#^${blockRef}`,
+        this.settings.refLinkAlias
+      );
+      lineToMigrate = `${lineToMigrate} ${fileLink}`;
+
+      linesToMigrate.push(lineToMigrate);
       lines[task.position.start.line] = line.replace("- [ ]", "- [>]");
     });
     const modifiedContent = lines.join("\n");
