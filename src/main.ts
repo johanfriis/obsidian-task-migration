@@ -339,6 +339,8 @@ export default class TaskMigrationPlugin extends Plugin {
         line = `${line} ^${blockRef}`;
       } else {
         blockRef = matchBlockRef[0];
+        // delete the blockref from the line
+        lineToMigrate = lineToMigrate.replace(` ^${blockRef}`, "");
       }
 
       // TODO: figure out how to add tags to tasks that already have a blockref (it needs to be before the blockref)
@@ -346,7 +348,7 @@ export default class TaskMigrationPlugin extends Plugin {
       // add a link to the blockref to the line
       const fileLink = this.app.fileManager.generateMarkdownLink(
         file,
-        file.name,
+        file.parent.path,
         `#^${blockRef}`,
         this.settings.refLinkAlias
       );
