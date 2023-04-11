@@ -327,10 +327,6 @@ export default class TaskMigrationPlugin extends Plugin {
       let line = lines[task.position.start.line];
       let lineToMigrate = line;
 
-      if (this.settings.migrationTag) {
-        line = `${lineToMigrate} #${this.settings.migrationTag}`;
-      }
-
       // check is line ends with a block reference (a caret followed by a 6 character hex string)
       const matchBlockRef = line.match(/(?<=\^)[0-9a-f]{6}$/);
       let blockRef;
@@ -343,7 +339,9 @@ export default class TaskMigrationPlugin extends Plugin {
         lineToMigrate = lineToMigrate.replace(` ^${blockRef}`, "");
       }
 
-      // TODO: figure out how to add tags to tasks that already have a blockref (it needs to be before the blockref)
+      if (this.settings.migrationTag) {
+        lineToMigrate = `${lineToMigrate} #${this.settings.migrationTag}`;
+      }
 
       // add a link to the blockref to the line
       const fileLink = this.app.fileManager.generateMarkdownLink(
