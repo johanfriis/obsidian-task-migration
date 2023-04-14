@@ -32,6 +32,9 @@ export default class TaskMigrationPlugin extends Plugin {
   headingLevel: number;
   headingName: string;
 
+  blockRefRegex = /(?<=\^)[\da-fA-F]{6}$/;
+  blockRefLinkRegex = /\[\[[^\]]*#(\^[\da-fA-F]{6})(\|[^\]]+)?\]\]$/;
+
   async onload() {
     await this.loadSettings();
 
@@ -286,6 +289,7 @@ export default class TaskMigrationPlugin extends Plugin {
 
     const taskTree = listItemsToTree(potentialTasks as ListItem[]);
     const tasks = filterAndFlattenItemTree(taskTree);
+    const topLevelTaskIds = taskTree.map((item) => item.id);
 
     // Actually migrate the tasks in the file
     const content = await this.app.vault.read(file);
@@ -296,30 +300,57 @@ export default class TaskMigrationPlugin extends Plugin {
       let line = lines[task.position.start.line];
       let lineToMigrate = line;
 
-      // check is line ends with a block reference (a caret followed by a 6 character hex string)
-      const matchBlockRef = line.match(/(?<=\^)[0-9a-f]{6}$/);
-      let blockRef;
-      if (!matchBlockRef) {
-        blockRef = createBlockRef();
-        line = `${line} ^${blockRef}`;
-      } else {
-        blockRef = matchBlockRef[0];
-        // delete the blockref from the line
-        lineToMigrate = lineToMigrate.replace(` ^${blockRef}`, "");
-      }
+      // only tag and link tasks that are at the top level or if the user has opted to tag all lines
+      if (
+        topLevelTaskIds.includes(task.position.start.line) ||
+        this.settings.tagAllLines
+      ) {
+        let fileLink;
+        let blockRef;
 
-      if (this.settings.migrationTag) {
-        lineToMigrate = `${lineToMigrate} #${this.settings.migrationTag}`;
-      }
+        // check if line ends with a link to a block reference ([[link#^blockref|alias]])
+        const matchBlockRefLink = line.match(this.blockRefLinkRegex);
 
-      // add a link to the blockref to the line
-      const fileLink = this.app.fileManager.generateMarkdownLink(
-        file,
-        file.parent.path,
-        `#^${blockRef}`,
-        this.settings.refLinkAlias
-      );
-      lineToMigrate = `${lineToMigrate} ${fileLink}`;
+        if (matchBlockRefLink) {
+          blockRef = matchBlockRefLink[0];
+          fileLink = matchBlockRefLink[0];
+          lineToMigrate = lineToMigrate
+            .replace(this.blockRefLinkRegex, "")
+            .trim();
+        }
+
+        // check if line ends with a block reference (a caret followed by a 6 character hex string)
+        const matchBlockRef = line.match(this.blockRefRegex);
+
+        if (matchBlockRef) {
+          blockRef = matchBlockRef[0];
+          lineToMigrate = lineToMigrate.replace(this.blockRefRegex, "").trim();
+        }
+
+        if (
+          this.settings.migrationTag &&
+          !line.includes(this.settings.migrationTag)
+        ) {
+          lineToMigrate = `${lineToMigrate} #${this.settings.migrationTag}`;
+        }
+
+        if (!blockRef) {
+          blockRef = createBlockRef();
+          // add block ref the the line we leave behind
+          line = `${line} ^${blockRef}`;
+        }
+
+        if (!fileLink) {
+          fileLink = this.app.fileManager.generateMarkdownLink(
+            file,
+            file.parent.path,
+            `#^${blockRef}`,
+            this.settings.refLinkAlias
+          );
+        }
+
+        lineToMigrate = `${lineToMigrate} ${fileLink}`;
+      }
 
       linesToMigrate.push(lineToMigrate);
       lines[task.position.start.line] = line.replace("- [ ]", "- [>]");

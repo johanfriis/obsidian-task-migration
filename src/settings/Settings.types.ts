@@ -4,4 +4,5 @@ export type Settings = {
   sidewaysFile: string | null;
   refLinkAlias?: string;
   migrationTag?: string;
+  tagAllLines: boolean;
 };

@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidewaysFile: null,
   refLinkAlias: undefined,
   migrationTag: undefined,
+  tagAllLines: false,
 };
 
 export class TaskMigrationSettings extends PluginSettingTab {
@@ -27,6 +28,7 @@ export class TaskMigrationSettings extends PluginSettingTab {
     this.addHeading();
     this.addTaskHeadingLevel();
     this.addTaskHeadingName();
+    this.addTagAllLines();
     this.addRefLinkAlias();
     this.addMigrationTag();
     this.addSidewaysMigrationFile();
@@ -68,6 +70,22 @@ export class TaskMigrationSettings extends PluginSettingTab {
           .setValue(this.plugin.settings.taskHeadingName)
           .onChange(async (value) => {
             this.plugin.settings.taskHeadingName = value;
+            await this.plugin.saveSettings();
+          })
+      );
+  }
+
+  addTagAllLines(): void {
+    new Setting(this.containerEl)
+      .setName("Link And Tag All Lines")
+      .setDesc(
+        "Toggle whether to link and tag all nested lines or just top level line."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.tagAllLines)
+          .onChange(async (value) => {
+            this.plugin.settings.tagAllLines = value;
             await this.plugin.saveSettings();
           })
       );
