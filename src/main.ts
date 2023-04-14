@@ -11,11 +11,14 @@ import {
 } from "./consts";
 import {
   createBlockRef,
+  filterAndFlattenItemTree,
   getAllFilePaths,
   getDailyNotes,
   getTaskSection,
+  listItemsToTree,
 } from "./helpers";
 import { ChooserModal } from "./modules";
+import { ListItem } from "./types";
 
 class TaskMigrationError extends Error {
   constructor(message: string) {
@@ -219,6 +222,10 @@ export default class TaskMigrationPlugin extends Plugin {
       );
     }
 
+    if (linesToMigrate.length === 0) {
+      return;
+    }
+
     // from the endLine, move backwards until we reach the first non empty line,
     // them insert the linesToMigrate there
     const content = await this.app.vault.read(file);
@@ -277,46 +284,8 @@ export default class TaskMigrationPlugin extends Plugin {
       return FileAlreadyMigrated;
     }
 
-    let lastSeenMigratableTask = -1;
-    let previousTaskParent = -1;
-    let hasNestedMigratableTask = false;
-
-    for (let i = potentialTasks.length - 1; i >= 0; i--) {
-      const listItem = potentialTasks[i];
-      if (listItem.task) {
-        const taskParent = listItem.parent;
-        const taskMarker = listItem.task;
-
-        if (!TASKS_TO_MIGRATE.includes(taskMarker)) {
-          if (hasNestedMigratableTask) {
-            if (taskParent < 0) {
-              hasNestedMigratableTask = false;
-              continue;
-            }
-
-            if (taskParent < previousTaskParent) {
-              previousTaskParent = taskParent;
-              continue;
-            }
-          }
-
-          delete potentialTasks[i];
-          continue;
-        }
-
-        lastSeenMigratableTask = i;
-
-        if (taskParent && taskParent > 0) {
-          hasNestedMigratableTask = true;
-          previousTaskParent = taskParent;
-        }
-      } else {
-        if (i > lastSeenMigratableTask) {
-          delete potentialTasks[i];
-        }
-      }
-    }
-    const tasks = potentialTasks.filter((task) => task !== null);
+    const taskTree = listItemsToTree(potentialTasks as ListItem[]);
+    const tasks = filterAndFlattenItemTree(taskTree);
 
     // Actually migrate the tasks in the file
     const content = await this.app.vault.read(file);
@@ -355,6 +324,7 @@ export default class TaskMigrationPlugin extends Plugin {
       linesToMigrate.push(lineToMigrate);
       lines[task.position.start.line] = line.replace("- [ ]", "- [>]");
     });
+
     const modifiedContent = lines.join("\n");
     this.app.vault.modify(file, modifiedContent);
 
