@@ -15,7 +15,7 @@ export function listItemsToTree(listItems: ListItem[]): ListItemNode[] {
   const tree: ListItemNode[] = [];
 
   nodeMap.forEach((node, id) => {
-    if (node.parent !== -4) {
+    if (node.parent >= 0) {
       const parent = nodeMap.get(node.parent);
       if (parent) {
         parent.children?.push(node);

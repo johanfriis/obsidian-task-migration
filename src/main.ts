@@ -32,7 +32,7 @@ export default class TaskMigrationPlugin extends Plugin {
   headingLevel: number;
   headingName: string;
 
-  blockRefRegex = /(?<=\^)[\da-fA-F]{6}$/;
+  blockRefRegex = /\^[\da-fA-F]{6}$/;
   blockRefLinkRegex = /\[\[[^\]]*#(\^[\da-fA-F]{6})(\|[^\]]+)?\]\]$/;
 
   async onload() {
@@ -62,12 +62,7 @@ export default class TaskMigrationPlugin extends Plugin {
       id: "obsidian-task-migration-migrate-sideways",
       name: `Migrate Tasks Sideways`,
       icon: "arrow-right-circle",
-      editorCheckCallback: (checking, editor, ctx) => {
-        if (checking) {
-          return true;
-          return this.canMigrateToFile(ctx.file);
-        }
-
+      editorCallback: (_, ctx) => {
         this.migrateSideways(ctx.file as TFile).catch((error) => {
           if (error instanceof TaskMigrationError) {
             new Notice(`${this.manifest.name}: ${error.message}`);
@@ -75,6 +70,7 @@ export default class TaskMigrationPlugin extends Plugin {
         });
       },
     });
+
     console.log("Obsidian Task Migration running ...");
   }
 
@@ -344,7 +340,7 @@ export default class TaskMigrationPlugin extends Plugin {
           fileLink = this.app.fileManager.generateMarkdownLink(
             file,
             file.parent.path,
-            `#^${blockRef}`,
+            `#${blockRef}`,
             this.settings.refLinkAlias
           );
         }
