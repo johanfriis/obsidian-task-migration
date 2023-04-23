@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS: Settings = {
   taskHeadingLevel: "2",
   taskHeadingName: "Tasks",
   sidewaysFile: null,
+  enableTaskLinkingAndTagging: true,
   refLinkAlias: undefined,
   migrationTag: undefined,
   tagAllLines: false,
@@ -28,10 +29,13 @@ export class TaskMigrationSettings extends PluginSettingTab {
     this.addHeading();
     this.addTaskHeadingLevel();
     this.addTaskHeadingName();
-    this.addTagAllLines();
-    this.addRefLinkAlias();
-    this.addMigrationTag();
     this.addSidewaysMigrationFile();
+    this.addEnableTaskLinkingAndTagging();
+    if (this.plugin.settings.enableTaskLinkingAndTagging) {
+      this.addTagAllLines();
+      this.addRefLinkAlias();
+      this.addMigrationTag();
+    }
   }
 
   addHeading(): void {
@@ -71,6 +75,42 @@ export class TaskMigrationSettings extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.taskHeadingName = value;
             await this.plugin.saveSettings();
+          })
+      );
+  }
+
+  addSidewaysMigrationFile(): void {
+    const files = getAllFilePaths(this.app);
+
+    const fileOptions = Object.fromEntries(files.map((file) => [file, file]));
+
+    new Setting(this.containerEl)
+      .setName("Sideways Migration File")
+      .setDesc(
+        "Choose a file to migrate tasks to when migrating sideways. If empty, you will be asked every time."
+      )
+      .addDropdown((component) => {
+        return component
+          .addOptions(fileOptions)
+          .setValue(this.plugin.settings.sidewaysFile ?? "")
+          .onChange(async (value) => {
+            this.plugin.settings.sidewaysFile = value === "" ? null : value;
+            await this.plugin.saveSettings();
+          });
+      });
+  }
+
+  addEnableTaskLinkingAndTagging(): void {
+    new Setting(this.containerEl)
+      .setName("Enable Task Linking")
+      .setDesc("Toggle whether task linking and tagging is enabled")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableTaskLinkingAndTagging)
+          .onChange(async (value) => {
+            this.plugin.settings.enableTaskLinkingAndTagging = value;
+            await this.plugin.saveSettings();
+            this.display();
           })
       );
   }
@@ -121,26 +161,5 @@ export class TaskMigrationSettings extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
-  }
-
-  addSidewaysMigrationFile(): void {
-    const files = getAllFilePaths(this.app);
-
-    const fileOptions = Object.fromEntries(files.map((file) => [file, file]));
-
-    new Setting(this.containerEl)
-      .setName("Sideways Migration File")
-      .setDesc(
-        "Choose a file to migrate tasks to when migrating sideways. If empty, you will be asked every time."
-      )
-      .addDropdown((component) => {
-        return component
-          .addOptions(fileOptions)
-          .setValue(this.plugin.settings.sidewaysFile ?? "")
-          .onChange(async (value) => {
-            this.plugin.settings.sidewaysFile = value === "" ? null : value;
-            await this.plugin.saveSettings();
-          });
-      });
   }
 }

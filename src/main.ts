@@ -26,6 +26,7 @@ class TaskMigrationError extends Error {
     this.name = "TaskMigrationError";
   }
 }
+
 export default class TaskMigrationPlugin extends Plugin {
   settings: Settings;
 
@@ -298,8 +299,9 @@ export default class TaskMigrationPlugin extends Plugin {
 
       // only tag and link tasks that are at the top level or if the user has opted to tag all lines
       if (
-        topLevelTaskIds.includes(task.position.start.line) ||
-        this.settings.tagAllLines
+        this.settings.enableTaskLinkingAndTagging &&
+        (topLevelTaskIds.includes(task.position.start.line) ||
+          this.settings.tagAllLines)
       ) {
         let fileLink;
         let blockRef;
